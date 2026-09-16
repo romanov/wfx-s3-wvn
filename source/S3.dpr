@@ -13,6 +13,7 @@ uses
   System.AnsiStrings,
   Wfx.Plugin.S3 in 'Wfx.Plugin.S3.pas',
   Wfx.Plugin.S3.Path in 'Wfx.Plugin.S3.Path.pas',
+  Wfx.Plugin.S3.Client in 'Wfx.Plugin.S3.Client.pas',
   Wfx.Plugin.Base in 'Wfx.Plugin.Base.pas',
   Wfx.Plugin.intf in 'Wfx.Plugin.intf.pas',
   Wfx.Plugin.Consts in 'Wfx.Plugin.Consts.pas',

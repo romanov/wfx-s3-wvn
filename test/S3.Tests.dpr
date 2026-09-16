@@ -16,6 +16,9 @@ uses
   {$ENDIF }
   DUnitX.TestFramework,
   Wfx.Plugin.S3.tests in 'Wfx.Plugin.S3.tests.pas',
+  Wfx.Plugin.S3.Path.tests in 'Wfx.Plugin.S3.Path.tests.pas',
+  Wfx.Plugin.S3.Fakes in 'Wfx.Plugin.S3.Fakes.pas',
+  Wfx.Plugin.S3.Client in '..\source\Wfx.Plugin.S3.Client.pas',
   Wfx.Plugin.S3.Path in '..\source\Wfx.Plugin.S3.Path.pas',
   Wfx.Plugin.ExportProcs in '..\source\Wfx.Plugin.ExportProcs.pas',
   Wfx.Plugin.Consts in '..\source\Wfx.Plugin.Consts.pas',

@@ -3,18 +3,23 @@ unit Wfx.Plugin.S3.Path;
 interface
 
 type
+  /// <summary>
+  ///  Translates Total Commander remote names into S3 bucket names and object keys.
+  ///
+  ///  Input contract (see test/Wfx.Plugin.S3.Path.tests.pas for the full table):
+  ///    root                 '\'
+  ///    bucket               '\mybucket'      (FsFindFirstW passes no trailing slash)
+  ///    folder               '\mybucket\folder'
+  ///    file                 '\mybucket\folder\file.txt'
+  ///  S3 keys use '/' and carry no leading separator.
+  /// </summary>
   TS3TcPath = record
     BucketName: string;
-    TcPathWithoutBucket :string;
-    S3Path :string;
     function IsRoot(const aRemoteName:string): Boolean;
     function IsBucket(const aRemoteName:string): Boolean;
-    function IsS3Object(const aRemoteName:string): Boolean;
     function GetBucketName(const aRemoteName:string):string;
     function StripAnyBucket(const aRemoteName:string):string;
     function StripKnownBucket(const aRemoteName:string):string;
-    function RemoteNameToS3(const aRemoteName:string):string;
-    function GetS3FileName(const aRemoteName:string):string;
     function GetPrefix(const aRemoteName:string):string;
     constructor Create(aBucketName:string);
   end;
@@ -22,19 +27,11 @@ type
 implementation
 
 uses
-  System.SysUtils,
-  System.Classes,
-  System.AnsiStrings,
-  System.IOUtils
+  System.SysUtils
 ;
 
 
 { TS3TcPath }
-
-function TS3TcPath.RemoteNameToS3(const aRemoteName: string): string;
-begin
-  Result := aRemoteName.Replace('\' + BucketName + '\', '');
-end;
 
 function TS3TcPath.StripAnyBucket(const aRemoteName: string): string;
 begin
@@ -69,16 +66,6 @@ end;
 function TS3TcPath.IsRoot(const aRemoteName: string): Boolean;
 begin
   Result := aRemoteName = '\';
-end;
-
-function TS3TcPath.IsS3Object(const aRemoteName: string): Boolean;
-begin
-  Result := not IsBucket(aRemoteName)
-end;
-
-function TS3TcPath.GetS3FileName(const aRemoteName: string): string;
-begin
-  Result := TPath.GetFileName(StripKnownBucket(aRemoteName))
 end;
 
 constructor TS3TcPath.Create(aBucketName: string);

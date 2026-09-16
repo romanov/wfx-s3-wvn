@@ -202,6 +202,7 @@
         </RcCompile>
         <DCCReference Include="Wfx.Plugin.S3.pas"/>
         <DCCReference Include="Wfx.Plugin.S3.Path.pas"/>
+        <DCCReference Include="Wfx.Plugin.S3.Client.pas"/>
         <DCCReference Include="Wfx.Plugin.Base.pas"/>
         <DCCReference Include="Wfx.Plugin.intf.pas"/>
         <DCCReference Include="Wfx.Plugin.Consts.pas"/>

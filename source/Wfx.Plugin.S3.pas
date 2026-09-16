@@ -21,7 +21,8 @@ uses
   Wfx.Plugin.intf,
   Wfx.Plugin.Base,
   Wfx.Plugin.Consts,
-  Wfx.Plugin.S3.Path, Vcl.Dialogs;
+  Wfx.Plugin.S3.Path,
+  Wfx.Plugin.S3.Client, Vcl.Dialogs;
 
 type
   TPluginMode = ( pmInit, pmPickProfile, pmPickBucket, pmShowFolderContents );
@@ -31,9 +32,14 @@ type
   private
     procedure SetBucketName(const Value: string);
     procedure ConnectToS3;
+    function  GetCredentialsFilePath: string;
   protected
     FConnectionInfo: TAmazonConnectionInfo;
-    S3             : TAmazonStorageService;
+    FS3            : IS3Client;
+    FClientFactory : TS3ClientFactory;
+    /// Empty means "derive from the current user profile". Tests inject a
+    /// fixture path so they never read the developer's real ~/.aws/credentials.
+    FCredentialsFilePath: string;
     FBuckets       : TStrings;
     FRegion        : string;
     FBucketName    : string;
@@ -45,6 +51,10 @@ type
     FProfiles      : TStringList;
   public
     constructor Create; override;
+    /// Test seam. Pass nil for aClientFactory to get the production factory,
+    /// and '' for aCredentialsFilePath to use the real ~/.aws/credentials.
+    constructor CreateInjected(const aClientFactory: TS3ClientFactory;
+                               const aCredentialsFilePath: string);
     destructor Destroy; override;
     procedure Init; override;
     function GetPluginName: string;override;
@@ -80,10 +90,18 @@ begin
   Result := StrToDateTime(Value, fs);
 end;
 
+function TS3Plugin.GetCredentialsFilePath: string;
+begin
+  if FCredentialsFilePath <> '' then
+    Exit(FCredentialsFilePath);
+
+  const awsPath = GetUserPath;
+  Result := TPath.Combine(TPath.Combine(awsPath,'.aws'),'credentials');
+end;
+
 procedure TS3Plugin.ConnectToS3;
 begin
-  const awsPath = GetUserPath;
-  const credentials = TPath.Combine(TPath.Combine(awsPath,'.aws'),'credentials');
+  const credentials = GetCredentialsFilePath;
 
   FProfiles.Free;
   FProfiles := TStringList.Create;
@@ -103,13 +121,15 @@ begin
     end;
   end;
 
+  // Release the old client BEFORE freeing the connection info it points at.
+  // The previous code freed FConnectionInfo while the old service still held it.
+  FS3 := nil;
   FConnectionInfo.Free;
   FConnectionInfo             := TAmazonConnectionInfo.Create(nil);
   FConnectionInfo.AccountName := AccountName;
   FConnectionInfo.AccountKey  := AccountKey;
   FConnectionInfo.Region      := FREgion;
-  S3.Free;
-  S3                               := TAmazonStorageService.Create(FConnectionInfo);
+  FS3                         := FClientFactory(FConnectionInfo);
 
   if (AccountName = '') or
      (AccountKey = '') or
@@ -123,7 +143,21 @@ end;
 
 constructor TS3Plugin.Create;
 begin
-  inherited;
+  CreateInjected(nil, '');
+end;
+
+constructor TS3Plugin.CreateInjected(const aClientFactory: TS3ClientFactory;
+                                     const aCredentialsFilePath: string);
+begin
+  inherited Create;
+
+  if Assigned(aClientFactory) then
+    FClientFactory := aClientFactory
+  else
+    FClientFactory := DefaultS3ClientFactory;
+
+  FCredentialsFilePath := aCredentialsFilePath;
+
   PluginMode := TPluginMode.pmInit;
   Path := TS3TcPath.Create('');
   FProfiles := TStringList.Create;
@@ -140,12 +174,12 @@ begin
   try
     if Path.IsBucket(aRemoteName) then
     begin
-      Result := S3.DeleteBucket(Path.GetBucketName(aRemoteName), res, FRegion );
+      Result := FS3.DeleteBucket(Path.GetBucketName(aRemoteName), res, FRegion );
     end
     else
     begin
       s3ObjectName := Path.StripKnownBucket(aRemoteName);
-      Result := S3.DeleteObject( BucketName, s3ObjectName, res, FRegion );
+      Result := FS3.DeleteObject( BucketName, s3ObjectName, res, FRegion );
     end;
   finally
     LogDebug(res.StatusMessage);
@@ -156,7 +190,9 @@ end;
 destructor TS3Plugin.Destroy;
 begin
   FBuckets.Free;
-  S3.Free;
+  FProfiles.Free;
+  // Release the client before the connection info it points at.
+  FS3 := nil;
   FConnectionInfo.Free;
   inherited;
 end;
@@ -256,7 +292,8 @@ begin
     pmPickBucket:
       begin
         FFileList.Add(FPickProfile);
-        FBuckets := S3.ListBuckets;
+        FBuckets.Free; // ListBuckets hands back a list we own
+        FBuckets := FS3.ListBuckets;
         LogDebug('Retrieved bucket list');
         for var bucketName in FBuckets do
         begin
@@ -295,7 +332,7 @@ begin
         var params := TStringList.Create;
         params.AddPair('prefix', LDirectory );
 
-        var LBucketResult := S3.GetBucket(LBucketName, params, res, FRegion);
+        var LBucketResult := FS3.GetBucket(LBucketName, params, res, FRegion);
 
         if LBucketResult <> nil then
         begin
@@ -385,14 +422,14 @@ begin
   begin
     // we're at the root, so let's create a bucket
     res := TCloudResponseInfo.Create;
-    Result := S3.CreateBucket(aRemoteDir, TAmazonACLType.amzbaPrivate, FRegion, res);
+    Result := FS3.CreateBucket(aRemoteDir, TAmazonACLType.amzbaPrivate, FRegion, res);
   end
   else
   begin
     // we're in a bucket, so let's create a folder
     res := TCloudResponseInfo.Create;
     var s3Name := Path.StripKnownBucket(aRemoteDir) + '/';
-    S3.UploadObject(BucketName, s3Name, [], false, nil, nil, TAmazonACLType.amzbaNotSpecified, res, FRegion );
+    FS3.UploadObject(BucketName, s3Name, [], false, nil, nil, TAmazonACLType.amzbaNotSpecified, res, FRegion );
 
   end;
   Exit(True);
@@ -410,7 +447,7 @@ begin
   try
     res := TCloudResponseInfo.Create;
     var s3Name := Path.StripKnownBucket(aRemoteName);
-    S3.UploadObject(BucketName, s3Name, TFile.ReadAllBytes(aLocalName), false, nil, nil, TAmazonACLType.amzbaNotSpecified, res, FRegion );
+    FS3.UploadObject(BucketName, s3Name, TFile.ReadAllBytes(aLocalName), false, nil, nil, TAmazonACLType.amzbaNotSpecified, res, FRegion );
     Result := FS_FILE_OK;
   except
     Result := FS_FILE_WRITEERROR;
@@ -441,9 +478,9 @@ begin
     var newName := Path.StripAnyBucket(aNewName);
     var newBucket := Path.GetBucketName(aNewName);
 
-    S3.CopyObject(newBucket, newName, oldBucket, oldName, nil, nil, FRegion);
+    FS3.CopyObject(newBucket, newName, oldBucket, oldName, nil, nil, FRegion);
     if oldBucket = newBucket then
-      S3.DeleteObject(oldBucket, oldName, nil, FRegion) ;
+      FS3.DeleteObject(oldBucket, oldName, nil, FRegion) ;
     Result := FS_FILE_OK;
   except
     Result := 1;
@@ -483,7 +520,7 @@ begin
         try
           var params := TAmazonGetObjectOptionals.Create;
 
-          if S3.GetObject( BucketName, s3Item, params, s, nil, FRegion ) then
+          if FS3.GetObject( BucketName, s3Item, params, s, nil, FRegion ) then
           begin
             Result := FS_FILE_OK
           end
