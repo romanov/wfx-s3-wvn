@@ -130,7 +130,7 @@
         <DCC_Namespace>System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;Bde;$(DCC_Namespace)</DCC_Namespace>
         <Manifest_File>(None)</Manifest_File>
         <OutputExt>.wfx</OutputExt>
-        <Debugger_HostApplication>Z:\prog64\TotalCommander\TOTALCMD.EXE</Debugger_HostApplication>
+        <Debugger_HostApplication>C:\Program Files\totalcmd\TOTALCMD.EXE</Debugger_HostApplication>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_Win64)'!=''">
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
@@ -140,7 +140,7 @@
         <Manifest_File>(None)</Manifest_File>
         <OutputExt>.wfx64</OutputExt>
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
-        <Debugger_HostApplication>Z:\prog64\TotalCommander\TOTALCMD64.EXE</Debugger_HostApplication>
+        <Debugger_HostApplication>C:\Program Files\totalcmd\TOTALCMD64.EXE</Debugger_HostApplication>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1)'!=''">
         <DCC_Define>RELEASE;$(DCC_Define)</DCC_Define>
@@ -187,8 +187,8 @@
         <VerInfo_Locale>1033</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileVersion=1.0.0.448;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProductVersion=1.0.0.0;Comments=;ProgramID=com.embarcadero.$(MSBuildProjectName);FileDescription=$(MSBuildProjectName);ProductName=$(MSBuildProjectName)</VerInfo_Keys>
         <VerInfo_Build>448</VerInfo_Build>
-        <DCC_ExeOutput>z:\prog64\TotalCommander\plugins\wfx\S3\</DCC_ExeOutput>
-        <Debugger_HostApplication>Z:\prog64\TotalCommander\TOTALCMD64.EXE</Debugger_HostApplication>
+        <DCC_ExeOutput>..\bin</DCC_ExeOutput>
+        <Debugger_HostApplication>C:\Program Files\totalcmd\TOTALCMD64.EXE</Debugger_HostApplication>
         <DCC_DebugDCUs>true</DCC_DebugDCUs>
         <DCC_IntegerOverflowCheck>true</DCC_IntegerOverflowCheck>
         <DCC_RangeChecking>true</DCC_RangeChecking>
@@ -271,7 +271,7 @@
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>
-                <DeployFile LocalName="z:\prog64\TotalCommander\plugins\wfx\S3\S3.wfx64" Configuration="Debug" Class="ProjectOutput">
+                <DeployFile LocalName="..\bin\S3.wfx64" Configuration="Debug" Class="ProjectOutput">
                     <Platform Name="Win64">
                         <RemoteName>S3.dll</RemoteName>
                         <Overwrite>true</Overwrite>
