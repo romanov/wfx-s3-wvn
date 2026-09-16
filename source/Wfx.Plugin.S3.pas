@@ -30,7 +30,6 @@ type
   const
     PLUGIN_NAME = 'S3';
   private
-    procedure SetBucketName(const Value: string);
     procedure ConnectToS3;
     function  GetCredentialsFilePath: string;
   protected
@@ -42,7 +41,6 @@ type
     FCredentialsFilePath: string;
     FBuckets       : TStrings;
     FRegion        : string;
-    FBucketName    : string;
     FCurrentPath   : string;
     Path           : TS3TcPath;
     FProfile       : string;
@@ -71,10 +69,6 @@ type
     function RemoveDir(aRemoteName:String):Boolean;override;
     function Disconnect(aDisconnectRoot:String):Boolean;override;
     function GetLocalName(var aRemoteName:String;maxlen:integer):Boolean;override;
-
-    property BucketName:string read FBucketName write SetBucketName;
-
-
   end;
 
 implementation
@@ -159,28 +153,24 @@ begin
   FCredentialsFilePath := aCredentialsFilePath;
 
   PluginMode := TPluginMode.pmInit;
-  Path := TS3TcPath.Create('');
   FProfiles := TStringList.Create;
   FBuckets := TStringList.Create;
 
 end;
 
 function TS3Plugin.Delete(const aRemoteName: string): Boolean;
-  var res:TCloudResponseInfo;
-  var s3ObjectName: string;
-
+var res:TCloudResponseInfo;
 begin
   res := TCloudResponseInfo.Create;
   try
+    // The bucket comes from the path being acted on, never from whichever
+    // bucket happened to be browsed last.
+    const LBucket = Path.GetBucketName(aRemoteName);
+
     if Path.IsBucket(aRemoteName) then
-    begin
-      Result := FS3.DeleteBucket(Path.GetBucketName(aRemoteName), res, FRegion );
-    end
+      Result := FS3.DeleteBucket(LBucket, res, FRegion)
     else
-    begin
-      s3ObjectName := Path.StripKnownBucket(aRemoteName);
-      Result := FS3.DeleteObject( BucketName, s3ObjectName, res, FRegion );
-    end;
+      Result := FS3.DeleteObject(LBucket, Path.ToS3Key(aRemoteName), res, FRegion);
   finally
     LogDebug(res.StatusMessage);
     res.Free;
@@ -336,7 +326,6 @@ begin
 
         if LBucketResult <> nil then
         begin
-          BucketName := LBucketResult.Name;
           for var o in LBucketResult.Objects do
           begin
             if o.Name = LDirectory then
@@ -415,42 +404,56 @@ end;
 function TS3Plugin.MkDir(aRemoteDir: String): Boolean;
 var res:TCloudResponseInfo;
 begin
-  inherited;
-  aRemoteDir := aRemoteDir.TrimLeft(['\']);
-  var Slugs := aRemoteDir.Split(['\']);
-  if length(Slugs) = 1 then
-  begin
-    // we're at the root, so let's create a bucket
-    res := TCloudResponseInfo.Create;
-    Result := FS3.CreateBucket(aRemoteDir, TAmazonACLType.amzbaPrivate, FRegion, res);
-  end
-  else
-  begin
-    // we're in a bucket, so let's create a folder
-    res := TCloudResponseInfo.Create;
-    var s3Name := Path.StripKnownBucket(aRemoteDir) + '/';
-    FS3.UploadObject(BucketName, s3Name, [], false, nil, nil, TAmazonACLType.amzbaNotSpecified, res, FRegion );
+  res := TCloudResponseInfo.Create;
+  try
+    // The previous version ended in an unconditional Exit(True), discarding
+    // both results - a failed bucket or folder creation looked like a success.
+    if Path.IsBucket(aRemoteDir) then
+      // at the root, so create a bucket
+      Result := FS3.CreateBucket(Path.GetBucketName(aRemoteDir),
+                  TAmazonACLType.amzbaPrivate, FRegion, res)
+    else
+      // inside a bucket, so create a folder marker
+      Result := FS3.UploadObject(Path.GetBucketName(aRemoteDir),
+                  Path.ToS3Key(aRemoteDir) + '/', [], False, nil, nil,
+                  TAmazonACLType.amzbaNotSpecified, res, FRegion);
 
+    if not Result then
+      LogDebug('MkDir failed: ' + res.StatusMessage);
+  finally
+    res.Free;
   end;
-  Exit(True);
 end;
 
 function TS3Plugin.PutFile(aLocalName, aRemoteName: String; aCopyFlags: integer): integer;
 var res:TCloudResponseInfo;
 begin
-  if BucketName = '' then
+  const LBucket = Path.GetBucketName(aRemoteName);
+  if LBucket = '' then
   begin
     TCShowMessage('Cannot upload file', 'Select a bucket first');
-    Exit(FS_FILE_OK);
+    Exit(FS_FILE_NOTSUPPORTED);
   end;
 
+  res := TCloudResponseInfo.Create;
   try
-    res := TCloudResponseInfo.Create;
-    var s3Name := Path.StripKnownBucket(aRemoteName);
-    FS3.UploadObject(BucketName, s3Name, TFile.ReadAllBytes(aLocalName), false, nil, nil, TAmazonACLType.amzbaNotSpecified, res, FRegion );
-    Result := FS_FILE_OK;
-  except
-    Result := FS_FILE_WRITEERROR;
+    try
+      // UploadObject's result used to be discarded, so a rejected upload was
+      // reported to TC as a success.
+      if FS3.UploadObject(LBucket, Path.ToS3Key(aRemoteName),
+           TFile.ReadAllBytes(aLocalName), False, nil, nil,
+           TAmazonACLType.amzbaNotSpecified, res, FRegion) then
+        Result := FS_FILE_OK
+      else
+      begin
+        LogDebug('PutFile failed: ' + res.StatusMessage);
+        Result := FS_FILE_WRITEERROR;
+      end;
+    except
+      Result := FS_FILE_WRITEERROR;
+    end;
+  finally
+    res.Free;
   end;
 end;
 
@@ -469,28 +472,26 @@ end;
 function TS3Plugin.RenMovFile(aOldName, aNewName: String; aMove, aOverWrite: Boolean; aRemoteInfo: pRemoteInfo): integer;
 begin
   try
-    // Shitty, S3 does not support renaming of objects directly.
-    // Amazon suggests creating a new object, and deleting the old
-    var params := TAmazonGetObjectOptionals.Create;
-
-    var oldName := Path.StripAnyBucket(aOldName);
+    // S3 has no rename: copy the object, then delete the original - but ONLY
+    // for a move, and ONLY once the copy is confirmed. The previous version
+    // ignored aMove entirely and deleted whenever source and target buckets
+    // matched, so an ordinary copy destroyed its own source.
+    var oldName := Path.ToS3Key(aOldName);
     var oldBucket := Path.GetBucketName(aOldName);
-    var newName := Path.StripAnyBucket(aNewName);
+    var newName := Path.ToS3Key(aNewName);
     var newBucket := Path.GetBucketName(aNewName);
 
-    FS3.CopyObject(newBucket, newName, oldBucket, oldName, nil, nil, FRegion);
-    if oldBucket = newBucket then
-      FS3.DeleteObject(oldBucket, oldName, nil, FRegion) ;
+    if not FS3.CopyObject(newBucket, newName, oldBucket, oldName, nil, nil, FRegion) then
+      Exit(FS_FILE_WRITEERROR);
+
+    if aMove then
+      if not FS3.DeleteObject(oldBucket, oldName, nil, FRegion) then
+        Exit(FS_FILE_WRITEERROR);
+
     Result := FS_FILE_OK;
   except
-    Result := 1;
+    Result := FS_FILE_WRITEERROR;
   end;
-end;
-
-procedure TS3Plugin.SetBucketName(const Value: string);
-begin
-  FBucketName := Value;
-  Path.BucketName := Value;
 end;
 
 function TS3Plugin.GetUserPath: string;
@@ -506,32 +507,31 @@ end;
 function TS3Plugin.GetFile(aRemoteName, aLocalName: string): Integer;
 begin
   try
-    if (FCurrentPath = '\') then
-    begin
-      Result := FS_FILE_NOTSUPPORTED;
-      exit;
-    end
-    else
-    begin
-      if not AbortCopy then
-      begin
-        var s := TFileStream.Create(aLocalName, fmCreate);
-        var s3Item := Path.StripKnownBucket(aRemoteName);
-        try
-          var params := TAmazonGetObjectOptionals.Create;
+    if Path.IsRoot(FCurrentPath) then
+      Exit(FS_FILE_NOTSUPPORTED);
 
-          if FS3.GetObject( BucketName, s3Item, params, s, nil, FRegion ) then
-          begin
-            Result := FS_FILE_OK
-          end
-          else
-            Result := FS_FILE_READERROR;
-        finally
-          s.Free;
-        end;
-      end
+    if AbortCopy then
+      Exit(FS_FILE_USERABORT);
+
+    var s := TFileStream.Create(aLocalName, fmCreate);
+    try
+      var params := TAmazonGetObjectOptionals.Create;
+
+      // Previously a trailing unconditional 'Result := FS_FILE_OK' overwrote
+      // this, so every failed download was reported to TC as a success - and a
+      // move-from-S3 then deleted the remote object.
+      if FS3.GetObject(Path.GetBucketName(aRemoteName), Path.ToS3Key(aRemoteName),
+                       params, s, nil, FRegion) then
+        Result := FS_FILE_OK
+      else
+        Result := FS_FILE_READERROR;
+    finally
+      s.Free;
     end;
-    Result := FS_FILE_OK;
+
+    // Do not leave a half-written or empty file behind on failure.
+    if (Result <> FS_FILE_OK) and TFile.Exists(aLocalName) then
+      TFile.Delete(aLocalName);
   except
     on E: Exception do
     begin
